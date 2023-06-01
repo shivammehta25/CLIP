@@ -16,8 +16,7 @@ From the orignal clip, the Image encoder is replaced by the input encoder and te
 Install latest version of pytorch and lightning
 ### Installation
 ```bash
-pip install -r requirements.txt
-# pip install this branch
+# Pip install this branch, it should install all the dependencies
 pip install git+https://github.com/shivammehta25/CLIP.git@GestCLIP
 ```
 
