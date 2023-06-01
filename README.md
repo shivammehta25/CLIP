@@ -43,5 +43,5 @@ with torch.no_grad():
     logits_per_image, logits_per_text = features_from_inputs.mean(1), features_from_target_motion.mean(1) 
     probs = logits_per_image.softmax(dim=-1).cpu().numpy()
 
-print("Label probs:", probs)  # prints: [[0.9927937  0.00421068 0.00299572]]
+print("Label probs:", probs)  
 ```
