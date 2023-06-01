@@ -262,7 +262,8 @@ class ClipModel(L.LightningModule):
     
     def on_before_optimizer_step(self, optimizer):
         self.log_dict(grad_norm(self, norm_type=2))
-        
+       
+    @torch.inference_mode() 
     def embed(self, batch):
         assert isinstance(batch, dict) and all([modality in batch for modality in self.input_modalities]), f"Ensure the input modalities {self.input_modalities} are in the dictionary"
         assert [batch[modality].ndim == 2 for modality in self.input_modalities], f"Ensure the input modalities {self.input_modalities} be of two dimension (length, {self.hparams.inputs_dim}), currently only supports one element at inference at a time."
@@ -287,6 +288,7 @@ class ClipModel(L.LightningModule):
         return torch.concat(embeddings, dim=0)
     
     
+    @torch.inference_mode() 
     def embed_motion(self, batch):
         assert isinstance(batch, dict) and 'motion' in batch, f"Ensure the input modalities {self.input_modalities} are in the dictionary"
         assert batch['motion'].ndim == 2, f"Ensure the input modalities {self.input_modalities} be of two dimension (length, {self.hparams.inputs_dim}), currently only supports one element at inference at a time."
