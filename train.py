@@ -183,7 +183,7 @@ class DataModule(L.LightningDataModule):
     def add_argparse_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument("--agents", type=str, nargs='+', default=['main-agent', 'interloctr'], help="Agents' data to use")
-        parser.add_argument("--batch_size", type=int, default=24, help="batch size for training")
+        parser.add_argument("--batch_size", type=int, default=64, help="batch size for training")
         parser.add_argument("--num_workers", type=int, default=20, help="number of workers for training")
         parser.add_argument("--data_dir", type=str, default="data/chunks", help="path to data")
         parser.add_argument("--motion_dim", type=int, default=60, help="dimension of motion")
@@ -225,10 +225,10 @@ class ClipModel(L.LightningModule):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument("--embed_dim", type=int, default=512, help="embedding dimension")
         parser.add_argument("--context_length", type=int, default=500, help="context length")
-        parser.add_argument("--transformer_width", type=int, default=512, help="transformer width")
+        parser.add_argument("--transformer_width", type=int, default=768, help="transformer width")
         parser.add_argument("--transformer_heads", type=int, default=8, help="transformer heads")
-        parser.add_argument("--transformer_layers", type=int, default=12, help="transformer layers")
-        parser.add_argument("--lr", type=float, default=5e-4, help="learning rate")
+        parser.add_argument("--transformer_layers", type=int, default=6, help="transformer layers")
+        parser.add_argument("--lr", type=float, default=1e-5, help="learning rate")
         return parser 
 
     def training_step(self, batch, batch_idx):
@@ -240,6 +240,18 @@ class ClipModel(L.LightningModule):
         loss = self._run_loss_computation(batch)
         self.log("val_loss", loss, prog_bar=True, logger=True, on_step=False, on_epoch=True)
         return loss
+    
+    def _run_loss_computation_second(self, batch):
+        batch_size = batch['motion'].shape[0]
+        inputs = torch.stack([batch[modality] for modality in self.input_modalities]).sum(0)
+
+        similarity_matrix = self.model(inputs, batch['motion'])
+
+        ground_truth = torch.eye(similarity_matrix.shape[1], device=similarity_matrix.device).unsqueeze(0).expand(batch_size,-1,-1)
+
+        total_loss = F.mse_loss(similarity_matrix,ground_truth)
+
+        return total_loss
     
     def _run_loss_computation(self, batch):
         batch_size = batch['motion'].shape[0]

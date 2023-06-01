@@ -287,14 +287,14 @@ class CLIP(nn.Module):
             
 
         self.input_in_proj = nn.Linear(inputs_dim, transformer_width)
-        self.input_transformer = get_transformer()
-        self.ln_final_inputs = LayerNorm(transformer_width)
+        self.input_transformer = get_transformer_orig()
+        # self.ln_final_inputs = LayerNorm(transformer_width)
         
         self.motion_in_proj = nn.Linear(motion_dim, transformer_width)
-        self.motion_transformer = get_transformer()
+        self.motion_transformer = get_transformer_orig()
 
         self.pos_emb = PositionalEmbedding(transformer_width)
-        self.ln_final_motion = LayerNorm(transformer_width)
+        # self.ln_final_motion = LayerNorm(transformer_width)
 
 
         self.input_out_proj = nn.Parameter(torch.empty(transformer_width, embed_dim))
@@ -302,7 +302,7 @@ class CLIP(nn.Module):
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        # self.initialize_parameters()
+        self.initialize_parameters()
 
     def initialize_parameters(self):
 
@@ -342,7 +342,7 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.motion_transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final_motion(x)
+        # x = self.ln_final_motion(x)
 
         x = x @ self.motion_out_proj
 
@@ -360,7 +360,7 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.input_transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final_inputs(x)
+        # x = self.ln_final_inputs(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
@@ -368,6 +368,22 @@ class CLIP(nn.Module):
         x = x @ self.input_out_proj
 
         return x
+    
+    
+    def forward_second(self, inputs, motion):
+        motion_feature = self.encode_motion(motion)
+        input_features = self.encode_inputs(inputs)
+
+        # normalized features
+        motion_feature = motion_feature / motion_feature.norm(dim=2, keepdim=True)
+        input_features = input_features / input_features.norm(dim=2, keepdim=True)
+
+        # cosine similarity as logits
+        logit_scale = self.logit_scale.exp()
+        similarity_matrix = logit_scale * torch.matmul(motion_feature, input_features.transpose(1, 2))
+
+        return similarity_matrix
+
 
     def forward(self, inputs, motion):
         motion_feature = self.encode_motion(motion).mean(dim=1)
