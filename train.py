@@ -48,6 +48,7 @@ class MotionTextDataset(Dataset):
 
     error_files = (
         'trn_2023_v0_139_main-agent.bvh_expmap_30fps.pkl'
+        'trn_2023_v0_181_interloctr.bvh_expmap_30fps.pkl'
     )
     
     def __init__(self, data_folder, agents=None, modules_to_load=['motion', 'text', 'audio']) -> None:
@@ -160,7 +161,7 @@ def custom_collate(batch):
 
 class DataModule(L.LightningDataModule):
     
-    def __init__(self, data_loc, agents, batch_size: int = 32, num_worker: int = 1):
+    def __init__(self, data_loc, agents, modalities, batch_size: int = 32, num_worker: int = 1):
         super().__init__()
         self.save_hyperparameters()
 
@@ -188,7 +189,7 @@ class DataModule(L.LightningDataModule):
         parser.add_argument("--data_dir", type=str, default="data/chunks", help="path to data")
         parser.add_argument("--motion_dim", type=int, default=60, help="dimension of motion")
         parser.add_argument("--inputs_dim", type=int, default=768, help="dimension of motion")
-        
+        parser.add_argument("--modalities", type=str, nargs='+', default=['motion', 'text', 'audio'], help="modalities to train on, motion will be the final output") 
         return parser
 
 
@@ -208,6 +209,7 @@ class ClipModel(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(args)
         self.input_modalities = input_modalities
+        self.input_modalities.remove("motion")
         
         self.model = CLIP(
             inputs_dim=inputs_dim,
@@ -244,36 +246,28 @@ class ClipModel(L.LightningModule):
     def _run_loss_computation_second(self, batch):
         batch_size = batch['motion'].shape[0]
         inputs = torch.stack([batch[modality] for modality in self.input_modalities]).sum(0)
-
         similarity_matrix = self.model(inputs, batch['motion'])
-
         ground_truth = torch.eye(similarity_matrix.shape[1], device=similarity_matrix.device).unsqueeze(0).expand(batch_size,-1,-1)
-
         total_loss = F.mse_loss(similarity_matrix,ground_truth)
-
         return total_loss
     
     def _run_loss_computation(self, batch):
         batch_size = batch['motion'].shape[0]
         inputs = torch.stack([batch[modality] for modality in self.input_modalities]).sum(0)
-
         logits_per_image, logits_per_text = self.model(inputs, batch['motion'])
-
         ground_truth = torch.arange(batch_size, device=logits_per_image.device)
-
         total_loss = (self.loss(logits_per_image,ground_truth) + self.loss(logits_per_text,ground_truth))/2
-
         return total_loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.lr,weight_decay=1e-6)
+        return torch.optim.AdamW(self.parameters(), lr=self.hparams.lr,weight_decay=1e-6)
     
     def on_before_optimizer_step(self, optimizer):
         self.log_dict(grad_norm(self, norm_type=2))
 
 
 def main(args):
-    data_module = DataModule(args.data_dir, args.agents, batch_size=args.batch_size, num_worker=args.num_workers)
+    data_module = DataModule(args.data_dir, args.agents, args.modalities, batch_size=args.batch_size, num_worker=args.num_workers)
     model = ClipModel(
         args,
         args.inputs_dim,
@@ -283,18 +277,20 @@ def main(args):
         args.transformer_width,
         args.transformer_heads,
         args.transformer_layers,
+        input_modalities=args.modalities,
     )
     
     tb_logger = TensorBoardLogger(save_dir=args.logdir, name=args.run_name)
+    print(args.gpus, type(args.gpus))
     trainer = L.Trainer(
         devices=args.gpus,
         log_every_n_steps=10,
         callbacks=[ModelCheckpoint(monitor="val_loss")],
         logger=tb_logger,
-        # overfit_batches=10,
-        precision='bf16',
+        precision='bf16-mixed',
+        max_epochs=100,
         )
-    trainer.fit(model, data_module)
+    trainer.fit(model, data_module, args.checkpoint_path)
 
 
 if __name__ == "__main__":
@@ -302,6 +298,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpus", nargs='+', type=int, default=[3])
     parser.add_argument("--run_name", type=str, default="clip_run")
     parser.add_argument("--logdir", type=str, default="lightning_logs")
+    parser.add_argument("--checkpoint_path", "-c", type=str, default=None, help="path to checkpoint to resume training")
     parser = DataModule.add_argparse_args(parser)
     parser = ClipModel.add_argparse_args(parser)
     args = parser.parse_args()
