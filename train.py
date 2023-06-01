@@ -182,9 +182,8 @@ class DataModule(L.LightningDataModule):
     @staticmethod
     def add_argparse_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument_group("data")
         parser.add_argument("--agents", type=str, nargs='+', default=['main-agent', 'interloctr'], help="Agents' data to use")
-        parser.add_argument("--batch_size", type=int, default=16, help="batch size for training")
+        parser.add_argument("--batch_size", type=int, default=24, help="batch size for training")
         parser.add_argument("--num_workers", type=int, default=20, help="number of workers for training")
         parser.add_argument("--data_dir", type=str, default="data/chunks", help="path to data")
         parser.add_argument("--motion_dim", type=int, default=60, help="dimension of motion")
@@ -224,22 +223,22 @@ class ClipModel(L.LightningModule):
     @staticmethod
     def add_argparse_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument_group("model")
         parser.add_argument("--embed_dim", type=int, default=512, help="embedding dimension")
         parser.add_argument("--context_length", type=int, default=500, help="context length")
-        parser.add_argument("--transformer_width", type=int, default=768, help="transformer width")
+        parser.add_argument("--transformer_width", type=int, default=512, help="transformer width")
         parser.add_argument("--transformer_heads", type=int, default=8, help="transformer heads")
         parser.add_argument("--transformer_layers", type=int, default=12, help="transformer layers")
+        parser.add_argument("--lr", type=float, default=5e-4, help="learning rate")
         return parser 
 
     def training_step(self, batch, batch_idx):
         loss = self._run_loss_computation(batch)
-        self.log("train_loss", loss, progress_bar=True, logger=True, on_step=True, on_epoch=True)
+        self.log("train_loss", loss, prog_bar=True, logger=True, on_step=True, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss = self._run_loss_computation(batch)
-        self.log("val_loss", loss, progress_bar=True, logger=True, on_step=False, on_epoch=True)
+        self.log("val_loss", loss, prog_bar=True, logger=True, on_step=False, on_epoch=True)
         return loss
     
     def _run_loss_computation(self, batch):
@@ -253,10 +252,9 @@ class ClipModel(L.LightningModule):
         total_loss = (self.loss(logits_per_image,ground_truth) + self.loss(logits_per_text,ground_truth))/2
 
         return total_loss
-        
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.model.parameters(), lr=5e-4, betas=(0.9,0.98),eps=1e-6,weight_decay=1e-6)
+        return torch.optim.Adam(self.parameters(), lr=self.hparams.lr,weight_decay=1e-6)
     
     def on_before_optimizer_step(self, optimizer):
         self.log_dict(grad_norm(self, norm_type=2))
@@ -275,21 +273,23 @@ def main(args):
         args.transformer_layers,
     )
     
-    tb_logger = TensorBoardLogger(save_dir=args.run_name)
+    tb_logger = TensorBoardLogger(save_dir=args.logdir, name=args.run_name)
     trainer = L.Trainer(
         devices=args.gpus,
         log_every_n_steps=10,
-        callbacks=[ModelCheckpoint(monitor="loss/val")],
+        callbacks=[ModelCheckpoint(monitor="val_loss")],
         logger=tb_logger,
+        # overfit_batches=10,
+        precision='bf16',
         )
     trainer.fit(model, data_module)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument_group("trainer")
     parser.add_argument("--gpus", nargs='+', type=int, default=[3])
     parser.add_argument("--run_name", type=str, default="clip_run")
+    parser.add_argument("--logdir", type=str, default="lightning_logs")
     parser = DataModule.add_argparse_args(parser)
     parser = ClipModel.add_argparse_args(parser)
     args = parser.parse_args()

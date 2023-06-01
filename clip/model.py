@@ -268,32 +268,41 @@ class CLIP(nn.Module):
 
         self.context_length = context_length
         self.motion_dim = motion_dim
+        
+        def get_transformer_orig():
+            return Transformer(
+            width=transformer_width,
+            layers=transformer_layers,
+            heads=transformer_heads,
+            attn_mask=self.build_attention_mask()
+        )
+            
+        def get_transformer():
+            transformer_encoder = nn.TransformerEncoderLayer(
+                d_model=transformer_width,
+                nhead=transformer_heads,
+                norm_first=True
+            )
+            return nn.TransformerEncoder(transformer_encoder, num_layers=transformer_layers)
+            
 
         self.input_in_proj = nn.Linear(inputs_dim, transformer_width)
-        self.input_transformer = Transformer(
-            width=transformer_width,
-            layers=transformer_layers,
-            heads=transformer_heads,
-            attn_mask=self.build_attention_mask()
-        )
+        self.input_transformer = get_transformer()
+        self.ln_final_inputs = LayerNorm(transformer_width)
         
         self.motion_in_proj = nn.Linear(motion_dim, transformer_width)
-        self.motion_transformer = Transformer(
-            width=transformer_width,
-            layers=transformer_layers,
-            heads=transformer_heads,
-            attn_mask=self.build_attention_mask()
-        )
+        self.motion_transformer = get_transformer()
 
         self.pos_emb = PositionalEmbedding(transformer_width)
-        self.ln_final = LayerNorm(transformer_width)
+        self.ln_final_motion = LayerNorm(transformer_width)
+
 
         self.input_out_proj = nn.Parameter(torch.empty(transformer_width, embed_dim))
         self.motion_out_proj = nn.Parameter(torch.empty(transformer_width, embed_dim))
 
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
-        self.initialize_parameters()
+        # self.initialize_parameters()
 
     def initialize_parameters(self):
 
@@ -316,9 +325,9 @@ class CLIP(nn.Module):
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
         # pytorch uses additive attention mask; fill with -inf
-        mask = torch.empty(self.context_length, self.context_length)
-        mask.fill_(float("-inf"))
-        mask.triu_(1)  # zero out the lower diagonal
+        mask = torch.ones(self.context_length, self.context_length)
+        # mask.fill_(float("-inf"))
+        # mask.triu_(1)  # zero out the lower diagonal
         return mask
 
     def encode_motion(self, motion):
@@ -333,7 +342,7 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.motion_transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
+        x = self.ln_final_motion(x)
 
         x = x @ self.motion_out_proj
 
@@ -351,7 +360,7 @@ class CLIP(nn.Module):
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.input_transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
+        x = self.ln_final_inputs(x)
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
@@ -370,11 +379,11 @@ class CLIP(nn.Module):
 
         # cosine similarity as logits
         logit_scale = self.logit_scale.exp()
-        logits_per_image = logit_scale * motion_feature @ input_features.t()
-        logits_per_text = logits_per_image.t()
+        logits_per_motion = logit_scale * motion_feature @ input_features.t()
+        logits_per_input = logits_per_motion.t()
 
         # shape = [global_batch_size, global_batch_size]
-        return logits_per_image, logits_per_text
+        return logits_per_motion, logits_per_input
 
 
 def convert_weights(model: nn.Module):
