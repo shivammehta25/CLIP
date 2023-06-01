@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+import argparse
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
@@ -9,6 +9,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from einops import rearrange
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.cli import LightningCLI
+from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.utilities import grad_norm
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
@@ -34,7 +38,7 @@ class MotionTextDataset(Dataset):
     FILEEXT = {
         'motion': 'bvh_expmap_30fps.pkl',
         'text': 'pkl',
-        'audio': 'muted.pkl'
+        'audio': 'pkl'
     }
     FOLDERNAME = {
         'motion': 'diffusion_genea23_sm0_0_30fps',
@@ -156,71 +160,138 @@ def custom_collate(batch):
 
 class DataModule(L.LightningDataModule):
     
-    def __init__(self, data_loc, batch_size: int = 32, num_worker: int = 1):
+    def __init__(self, data_loc, agents, batch_size: int = 32, num_worker: int = 1):
         super().__init__()
+        self.save_hyperparameters()
+
         self.data_loc = data_loc
+        self.agents = agents
         self.batch_size = batch_size
         self.num_workers = num_worker
 
     def setup(self, stage: str):
-        self.train_dataset = MotionTextDataset(f'{self.data_loc}/trn', agents=['main-agent'])
-        self.val_dataset = MotionTextDataset(f'{self.data_loc}/val', agents=['main-agent'])
+        self.train_dataset = MotionTextDataset(f'{self.data_loc}/trn', agents=self.agents)
+        self.val_dataset = MotionTextDataset(f'{self.data_loc}/val', agents=self.agents)
 
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, collate_fn=custom_collate, num_workers=self.num_workers)
 
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size, collate_fn=custom_collate, num_workers=self.num_workers)
+    
+    @staticmethod
+    def add_argparse_args(parent_parser):
+        parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument_group("data")
+        parser.add_argument("--agents", type=str, nargs='+', default=['main-agent', 'interloctr'], help="Agents' data to use")
+        parser.add_argument("--batch_size", type=int, default=16, help="batch size for training")
+        parser.add_argument("--num_workers", type=int, default=20, help="number of workers for training")
+        parser.add_argument("--data_dir", type=str, default="data/chunks", help="path to data")
+        parser.add_argument("--motion_dim", type=int, default=60, help="dimension of motion")
+        parser.add_argument("--inputs_dim", type=int, default=768, help="dimension of motion")
+        
+        return parser
 
 
 class ClipModel(L.LightningModule):
-    def __init__(self, hparams):
+    def __init__(
+        self,
+        args,
+        inputs_dim,
+        motion_dim,
+        embed_dim,
+        context_length,
+        transformer_width,
+        transformer_heads,
+        transformer_layers,
+        input_modalities=["audio", "text"],
+    ):
         super().__init__()
-        self.save_hyperparameters(hparams)
+        self.save_hyperparameters(args)
+        self.input_modalities = input_modalities
         
-        self.model = nn.Linear(512, 2)
-        
-    def forward(self, batch):
-        return self.model(batch['text'], batch['motion'])
+        self.model = CLIP(
+            inputs_dim=inputs_dim,
+            motion_dim=motion_dim,
+            embed_dim=embed_dim,
+            context_length=context_length,
+            transformer_width=transformer_width,
+            transformer_heads=transformer_heads,
+            transformer_layers=transformer_layers,
+        ) 
+        self.loss = nn.CrossEntropyLoss()
+
+    @staticmethod
+    def add_argparse_args(parent_parser):
+        parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
+        parser.add_argument_group("model")
+        parser.add_argument("--embed_dim", type=int, default=512, help="embedding dimension")
+        parser.add_argument("--context_length", type=int, default=500, help="context length")
+        parser.add_argument("--transformer_width", type=int, default=768, help="transformer width")
+        parser.add_argument("--transformer_heads", type=int, default=8, help="transformer heads")
+        parser.add_argument("--transformer_layers", type=int, default=12, help="transformer layers")
+        return parser 
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        y_hat = self.model(x)
-        loss = F.cross_entropy(y_hat, y)
+        loss = self._run_loss_computation(batch)
+        self.log("train_loss", loss, progress_bar=True, logger=True, on_step=True, on_epoch=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, acc = self._shared_eval_step(batch, batch_idx)
-        metrics = {"val_acc": acc, "val_loss": loss}
-        self.log_dict(metrics)
-        return metrics
+        loss = self._run_loss_computation(batch)
+        self.log("val_loss", loss, progress_bar=True, logger=True, on_step=False, on_epoch=True)
+        return loss
+    
+    def _run_loss_computation(self, batch):
+        batch_size = batch['motion'].shape[0]
+        inputs = torch.stack([batch[modality] for modality in self.input_modalities]).sum(0)
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0):
-        x, y = batch
-        y_hat = self.model(x)
-        return y_hat
+        logits_per_image, logits_per_text = self.model(inputs, batch['motion'])
+
+        ground_truth = torch.arange(batch_size, device=logits_per_image.device)
+
+        total_loss = (self.loss(logits_per_image,ground_truth) + self.loss(logits_per_text,ground_truth))/2
+
+        return total_loss
+        
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.model.parameters(), lr=0.02)
-
-
-
+        return torch.optim.AdamW(self.model.parameters(), lr=5e-4, betas=(0.9,0.98),eps=1e-6,weight_decay=1e-6)
+    
+    def on_before_optimizer_step(self, optimizer):
+        self.log_dict(grad_norm(self, norm_type=2))
 
 
 def main(args):
-    data_module = DataModule(args.data_dir, batch_size=args.batch_size, num_worker=args.num_workers)
-    model = ClipModel(hparams={})
+    data_module = DataModule(args.data_dir, args.agents, batch_size=args.batch_size, num_worker=args.num_workers)
+    model = ClipModel(
+        args,
+        args.inputs_dim,
+        args.motion_dim,
+        args.embed_dim,
+        args.context_length,
+        args.transformer_width,
+        args.transformer_heads,
+        args.transformer_layers,
+    )
     
-    trainer = L.Trainer(devices=args.gpus)
+    tb_logger = TensorBoardLogger(save_dir=args.run_name)
+    trainer = L.Trainer(
+        devices=args.gpus,
+        log_every_n_steps=10,
+        callbacks=[ModelCheckpoint(monitor="loss/val")],
+        logger=tb_logger,
+        )
     trainer.fit(model, data_module)
-    
+
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument_group("data")
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--num_workers", type=int, default=1)
-    parser.add_argument("--data_dir", type=str, default="data/chunks")
+    parser = argparse.ArgumentParser()
+    parser.add_argument_group("trainer")
     parser.add_argument("--gpus", nargs='+', type=int, default=[3])
+    parser.add_argument("--run_name", type=str, default="clip_run")
+    parser = DataModule.add_argparse_args(parser)
+    parser = ClipModel.add_argparse_args(parser)
     args = parser.parse_args()
+    print(args)
     main(args) 

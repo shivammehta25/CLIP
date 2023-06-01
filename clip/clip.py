@@ -2,12 +2,13 @@ import hashlib
 import os
 import urllib
 import warnings
-from typing import Any, Union, List
-from pkg_resources import packaging
+from typing import Any, List, Union
 
 import torch
 from PIL import Image
-from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
+from pkg_resources import packaging
+from torchvision.transforms import (CenterCrop, Compose, Normalize, Resize,
+                                    ToTensor)
 from tqdm import tqdm
 
 from .model import build_model
@@ -117,7 +118,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
         A torchvision transform that converts a PIL image into a tensor that the returned model can take as its input
     """
     if name in _MODELS:
-        model_path = _download(_MODELS[name], download_root or os.path.expanduser("~/.cache/clip"))
+        model_path = _download(_MODELS[name], download_root or os.path.expanduser("cache"))
     elif os.path.isfile(name):
         model_path = name
     else:
@@ -194,7 +195,7 @@ def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_a
     return model, _transform(model.input_resolution.item())
 
 
-def tokenize(texts: Union[str, List[str]], context_length: int = 77, truncate: bool = False) -> Union[torch.IntTensor, torch.LongTensor]:
+def tokenize(texts: Union[str, List[str]], context_length: int = 1000, truncate: bool = False) -> Union[torch.IntTensor, torch.LongTensor]:
     """
     Returns the tokenized representation of given input string(s)
 
@@ -228,6 +229,7 @@ def tokenize(texts: Union[str, List[str]], context_length: int = 77, truncate: b
     for i, tokens in enumerate(all_tokens):
         if len(tokens) > context_length:
             if truncate:
+                print(f"Truncating input: {texts[i]}")
                 tokens = tokens[:context_length]
                 tokens[-1] = eot_token
             else:
