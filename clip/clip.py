@@ -11,6 +11,7 @@ from torchvision.transforms import (CenterCrop, Compose, Normalize, Resize,
                                     ToTensor)
 from tqdm import tqdm
 
+from .lightning_module import ClipModel
 from .model import build_model
 from .simple_tokenizer import SimpleTokenizer as _Tokenizer
 
@@ -91,8 +92,26 @@ def available_models() -> List[str]:
     """Returns the names of available CLIP models"""
     return list(_MODELS.keys())
 
+def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu"):
+    hp = torch.load(name, map_location="cpu")['hyper_parameters']
+    print("This model was trained with the following modalities: ", hp['modalities'])
+    print("Expected inputs: {'text': (%d, %s), 'audio': (%d, %s)}" % (hp['context_length'], hp['inputs_dim'], hp['context_length'], hp['inputs_dim']))
+    return ClipModel.load_from_checkpoint(
+        checkpoint_path=name,
+        map_location=device,
+        args=hp,
+        inputs_dim=hp['inputs_dim'],
+        motion_dim=hp['motion_dim'],
+        embed_dim=hp['embed_dim'],
+        context_length=hp['context_length'],
+        transformer_width=hp['transformer_width'],
+        transformer_heads=hp['transformer_heads'],
+        transformer_layers=hp['transformer_layers'],
+        input_modalities=hp['modalities'],
+        )
 
-def load(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit: bool = False, download_root: str = None):
+
+def load_orig(name: str, device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu", jit: bool = False, download_root: str = None):
     """Load a CLIP model
 
     Parameters
