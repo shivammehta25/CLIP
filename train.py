@@ -53,6 +53,8 @@ if __name__ == "__main__":
     
     for lr in [1e-6, 5e-6, 3e-6]: 
         for transformer_width in [384, 512, 768]:
+            if lr == 1e-6 and transformer_width == 384:
+                continue
             args.transformer_width = transformer_width
             args.lr = lr
             args.subdir = f"lr_{lr}_transformer_width_{transformer_width}"
