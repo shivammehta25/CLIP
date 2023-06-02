@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from tqdm.auto import tqdm
 
-from train import MotionTextDataset
+from clip.lightning_module import MotionTextDataset
 
 
 def chunk_and_save(data, filename_key, data_key, chunk_location, chunk_size):
