@@ -1,4 +1,5 @@
 import argparse
+import random
 from collections import defaultdict
 from copy import deepcopy
 from pathlib import Path
@@ -84,6 +85,8 @@ class MotionTextDataset(Dataset):
                     data_point['audio_filename'] = self.data_folder / agent / self.FOLDERNAME['audio'] / f"{file_name}.{self.FILEEXT['audio']}"
 
                 self.data_files.append(remove_none(data_point))
+                
+        random.shuffle(self.data_files)
 
     def __len__(self) -> int:
         return len(self.data_files)
@@ -187,7 +190,7 @@ class DataModule(L.LightningDataModule):
         parser.add_argument("--batch_size", type=int, default=64, help="batch size for training")
         parser.add_argument("--num_workers", type=int, default=20, help="number of workers for training")
         parser.add_argument("--data_dir", type=str, default="data/chunks", help="path to data")
-        parser.add_argument("--motion_dim", type=int, default=60, help="dimension of motion")
+        parser.add_argument("--motion_dim", type=int, default=74, help="dimension of motion")
         parser.add_argument("--inputs_dim", type=int, default=768, help="dimension of motion")
         parser.add_argument("--modalities", type=str, nargs='+', default=['motion', 'text', 'audio'], help="modalities to train on, motion will be the final output")
         return parser
@@ -231,7 +234,7 @@ class ClipModel(L.LightningModule):
         parser.add_argument("--transformer_width", type=int, default=768, help="transformer width")
         parser.add_argument("--transformer_heads", type=int, default=8, help="transformer heads")
         parser.add_argument("--transformer_layers", type=int, default=6, help="transformer layers")
-        parser.add_argument("--lr", type=float, default=1e-5, help="learning rate")
+        parser.add_argument("--lr", type=float, default=5e-6, help="learning rate")
         return parser 
 
     def training_step(self, batch, batch_idx):

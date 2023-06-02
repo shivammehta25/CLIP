@@ -35,14 +35,14 @@ def main(args):
         ],
         logger=tb_logger,
         precision='bf16-mixed',
-        max_epochs=100,
+        max_epochs=-1,
         )
     trainer.fit(model, data_module, args.checkpoint_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpus", nargs='+', type=int, default=[3])
-    parser.add_argument("--run_name", type=str, default="HPTuning")
+    parser.add_argument("--run_name", type=str, default="NewData")
     parser.add_argument("--logdir", type=str, default="lightning_logs")
     parser.add_argument("--checkpoint_path", "-c", type=str, default=None, help="path to checkpoint to resume training")
     parser = DataModule.add_argparse_args(parser)
@@ -51,12 +51,8 @@ if __name__ == "__main__":
     
     
     
-    for lr in [1e-6, 5e-6, 3e-6]: 
-        for transformer_width in [384, 512, 768]:
-            if lr == 1e-6 and transformer_width == 384:
-                continue
-            args.transformer_width = transformer_width
-            args.lr = lr
-            args.subdir = f"lr_{lr}_transformer_width_{transformer_width}"
-            print(args)
-            main(args) 
+    for lr in [1e-5, 5e-6, 3e-6, 1e-6]:
+        args.lr = lr
+        args.subdir = f"lr_{lr}"
+        print(args)
+        main(args)

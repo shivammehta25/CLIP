@@ -32,8 +32,8 @@ model, preprocess = clip.load(CHECKPOINT_PATH, device=device)
 
 with torch.no_grad():
     features_from_inputs = model.embed({
-            'text': torch.randn(500, 768),
-            'audio': torch.randn(500, 768) # You can send mismatched size, it will interpolate and send output as the maxed value
+            'text': torch.randn(580, 768),
+            'audio': torch.randn(580, 768) # You can send mismatched size, it will interpolate and send output as the maxed value
     })
     features_from_target_motion = model.embed_motion({
         'motion': torch.randn(500, 60)
