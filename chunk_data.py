@@ -1,20 +1,28 @@
 from pathlib import Path
 
 import pandas as pd
+import torch
+import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from clip.lightning_module import MotionTextDataset
 
 
-def chunk_and_save(data, filename_key, data_key, chunk_location, chunk_size):
+def chunk_and_save(data, filename_key, data_key, chunk_location, chunk_size, sliding_window_size=None):
         save_motion_filename = chunk_location / Path("/".join(data[filename_key].parts[-3:]))
         save_motion_filename.parent.mkdir(parents=True, exist_ok=True)
         suffixes = save_motion_filename.suffixes
+        if sliding_window_size is None:
+            sliding_window_size = chunk_size
 
         while save_motion_filename.suffix:
             save_motion_filename = save_motion_filename.with_suffix("") 
 
-        motion_data = data[data_key].split(chunk_size, dim=0)
+        motion_data = data[data_key]
+        # pad with zeros to make window slide over all the data
+        motion_data = F.pad(motion_data, (0, 0, 0, sliding_window_size - motion_data.shape[0] % sliding_window_size))
+        motion_data = motion_data.unfold(0, chunk_size, sliding_window_size).transpose(1, 2)
+       
         
         for i, data_m in enumerate(motion_data):
             pd.DataFrame(data_m.numpy()).to_pickle(save_motion_filename.with_suffix(f".{i}{''.join(suffixes)}"))
@@ -24,6 +32,7 @@ def chunk_and_save(data, filename_key, data_key, chunk_location, chunk_size):
 def main():
     split = "trn"
     CHUNK_SIZE = 500
+    WINDOW_SIZE = 250
     CHUNK_LOCATION = Path(f'data/chunks/{split}')
     CHUNK_LOCATION.mkdir(parents=True, exist_ok=True)
 

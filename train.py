@@ -21,7 +21,7 @@ def main(args):
         args.transformer_layers,
         input_modalities=args.modalities,
     )
-    
+
     tb_logger = TensorBoardLogger(save_dir=args.logdir, name=args.run_name,
                                   sub_dir=args.subdir if hasattr(args, 'subdir') else None)
     print(args.gpus, type(args.gpus))

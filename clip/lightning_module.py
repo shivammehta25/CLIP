@@ -48,7 +48,7 @@ class MotionTextDataset(Dataset):
         'trn_2023_v0_181_interloctr.bvh_expmap_30fps.pkl'
     )
     
-    def __init__(self, data_folder, agents=None, modules_to_load=['motion', 'text', 'audio']) -> None:
+    def __init__(self, data_folder, agents=None, modules_to_load=['motion', 'text', 'audio'], mirrored=True) -> None:
         super().__init__()
         if isinstance(data_folder, str):
             data_folder = Path(data_folder)
@@ -63,9 +63,9 @@ class MotionTextDataset(Dataset):
         self.data_files = []
         for agent in agents:
             for file in (self.data_folder / agent / self.FOLDERNAME['motion']).glob(f'*.{self.FILEEXT["motion"]}'):
-                if file.name in self.error_files:
+                if file.name in self.error_files or file.name.replace('_mirrored', '') in self.error_files:
                     continue
-                if 'mirrored' in file.name:
+                if 'mirrored' in file.name and not mirrored:
                     continue
                 
                 data_point = deepcopy(meta_data_structure)
@@ -73,6 +73,9 @@ class MotionTextDataset(Dataset):
                 file_name = file.with_suffix('').with_suffix('').name
                 if 'motion' in modules_to_load:
                     data_point['motion_filename'] = file
+
+                if mirrored:
+                    file_name = file_name.replace('_mirrored', '')
                 
                 if 'text' in modules_to_load:
                     data_point['text_filename'] = self.data_folder / agent / self.FOLDERNAME['text'] / f"{file_name}.{self.FILEEXT['text']}"
@@ -186,7 +189,7 @@ class DataModule(L.LightningDataModule):
         parser.add_argument("--data_dir", type=str, default="data/chunks", help="path to data")
         parser.add_argument("--motion_dim", type=int, default=60, help="dimension of motion")
         parser.add_argument("--inputs_dim", type=int, default=768, help="dimension of motion")
-        parser.add_argument("--modalities", type=str, nargs='+', default=['motion', 'text', 'audio'], help="modalities to train on, motion will be the final output") 
+        parser.add_argument("--modalities", type=str, nargs='+', default=['motion', 'text', 'audio'], help="modalities to train on, motion will be the final output")
         return parser
 
 
